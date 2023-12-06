@@ -2,6 +2,7 @@ use anyhow::{anyhow, Error};
 use std::ops::Range;
 use std::{collections::HashMap, str::FromStr};
 use itertools::Itertools;
+use rayon::iter::{ParallelIterator, ParallelBridge};
 
 static INPUT: &str = include_str!("../input.txt");
 
@@ -141,14 +142,14 @@ impl Almanac {
     fn find_smallest_range_distance(&self) -> Result<u64, Error> {
         let seed_range = self.seeds.iter().tuples().map(|(start, len)| *start..(*start+*len));
 
-        let mut locations: Vec<u64> = seed_range
+        let location = seed_range
+            .par_bridge()
             .map(|r| r.into_iter())
             .flatten()
-            .map(|s| self.walk_map("seed", "location", s))
-            .collect::<Result<_, _>>()?;
-        locations.sort();
-        // dbg!(&locations);
-        Ok(locations[0])
+            .map(|s| self.walk_map("seed", "location", s).unwrap())
+            .min();
+
+        Ok(location.unwrap())
     }
 }
 
