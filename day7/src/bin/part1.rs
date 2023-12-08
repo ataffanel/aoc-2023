@@ -79,8 +79,6 @@ impl From<[Card; 5]> for HandType {
         pattern.sort();
         let pattern: Vec<_> = pattern.iter().rev().collect();
 
-        dbg!(&pattern);
-
         match pattern.as_slice() {
             [5, ..] => Self::FiveOfAKind,
             [4, ..] => Self::FourOfAKind,
@@ -153,13 +151,12 @@ impl Game {
             .iter()
             .sorted_by(|(hand, _), (other_hand, _)| hand.partial_cmp(other_hand).unwrap())
             .enumerate()
-            .inspect(|v| { dbg!(v); } )
             .map(|(i, (_, bid))| (i as u64 + 1) * bid)
             .sum()
     }
 }
 
-static INPUT: &str = include_str!("../input.txt");
+static INPUT: &str = include_str!("../../input.txt");
 
 fn main() -> Result<(), Error> {
     let game = Game::from_str(INPUT)?;
