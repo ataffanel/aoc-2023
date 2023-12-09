@@ -1,10 +1,13 @@
-use std::{collections::HashMap, str::FromStr};
-use anyhow::{Error, anyhow};
+use anyhow::{anyhow, Error};
 use itertools::Itertools;
-use rayon::prelude::*;
+use lcmx::lcmx;
+use std::{collections::HashMap, str::FromStr};
 
 #[derive(Debug)]
-enum Direction {Left, Right}
+enum Direction {
+    Left,
+    Right,
+}
 
 impl TryFrom<char> for Direction {
     type Error = Error;
@@ -13,7 +16,7 @@ impl TryFrom<char> for Direction {
         match value {
             'L' => Ok(Self::Left),
             'R' => Ok(Self::Right),
-            _ => Err(anyhow!("Invalid direction char: '{}'", value))
+            _ => Err(anyhow!("Invalid direction char: '{}'", value)),
         }
     }
 }
@@ -28,21 +31,41 @@ impl FromStr for Map {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (instructions, network): (&str, &str) = s.split("\n\n").take(2).collect_tuple().ok_or(anyhow!("format error1"))?;
+        let (instructions, network): (&str, &str) = s
+            .split("\n\n")
+            .take(2)
+            .collect_tuple()
+            .ok_or(anyhow!("format error1"))?;
 
-        let instructions = instructions.chars().map(Direction::try_from).collect::<Result<Vec<_>, _>>()?;
+        let instructions = instructions
+            .chars()
+            .map(Direction::try_from)
+            .collect::<Result<Vec<_>, _>>()?;
 
-        let network = network.lines().map(|line| {
-            let (location, next): (&str, &str) = line.split(" = ").collect_tuple().ok_or(anyhow!("format error2"))?;
+        let network = network
+            .lines()
+            .map(|line| {
+                let (location, next): (&str, &str) = line
+                    .split(" = ")
+                    .collect_tuple()
+                    .ok_or(anyhow!("format error2"))?;
 
-            let location = location.to_string();
+                let location = location.to_string();
 
-            let (left, right): (String, String) = next[1..next.len()-1].split(", ").map(str::to_string).collect_tuple().ok_or(anyhow!("format error3"))?;
+                let (left, right): (String, String) = next[1..next.len() - 1]
+                    .split(", ")
+                    .map(str::to_string)
+                    .collect_tuple()
+                    .ok_or(anyhow!("format error3"))?;
 
-            Ok::<_, Error>((location,(left, right)))
-        }).collect::<Result<_, _>>()?;
+                Ok::<_, Error>((location, (left, right)))
+            })
+            .collect::<Result<_, _>>()?;
 
-        Ok(Self{ instructions, network})
+        Ok(Self {
+            instructions,
+            network,
+        })
     }
 }
 
@@ -55,7 +78,6 @@ impl Map {
             location = match direction {
                 &Direction::Left => self.network[&location].0.clone(),
                 &Direction::Right => self.network[&location].1.clone(),
-
             };
 
             if location == "ZZZ" {
@@ -66,27 +88,33 @@ impl Map {
         step
     }
 
-    fn parallel_steps(&self) -> u32 {
-        let mut step = 0;
-        let mut tracks: Vec<String> = self.network.keys().filter(|location| location.ends_with('A')).cloned().collect_vec();
-        for direction in self.instructions.iter().cycle() {
-            step += 1;
+    fn parallel_steps(&self) -> u64 {
+        let tracks = self
+            .network
+            .keys()
+            .filter(|location| location.ends_with('A'));
 
-            tracks = tracks.par_iter()
-                .map(|location| {
-                    match direction {
-                        &Direction::Left => self.network[location].0.clone(),
-                        &Direction::Right => self.network[location].1.clone(),
+        let lengths = tracks
+            .map(|start| {
+                let mut step = 0;
+                let mut location = start.to_string();
+                for direction in self.instructions.iter().cycle() {
+                    step += 1;
+                    location = match direction {
+                        &Direction::Left => self.network[&location].0.clone(),
+                        &Direction::Right => self.network[&location].1.clone(),
+                    };
+
+                    if location.ends_with('Z') {
+                        break;
                     }
-                })
-                .collect();
+                }
 
-            if tracks.iter().all(|location| location.ends_with('Z')) {
-                break;
-            }
-        }
+                step as u64
+            })
+            .collect_vec();
 
-        step
+        lcmx(&lengths).unwrap()
     }
 }
 
@@ -96,7 +124,10 @@ fn main() -> Result<(), Error> {
     let map = Map::from_str(INPUT)?;
 
     println!("Part 1: Steps to exit: {}", map.steps());
-    println!("Part 2: Steps to exit parallel tracks: {}", map.parallel_steps());
+    println!(
+        "Part 2: Steps to exit parallel tracks: {}",
+        map.parallel_steps()
+    );
 
     Ok(())
 }
@@ -107,7 +138,8 @@ mod tests {
 
     #[test]
     fn test_example_1() -> Result<(), Error> {
-        let map = Map::from_str(r#"RL
+        let map = Map::from_str(
+            r#"RL
 
 AAA = (BBB, CCC)
 BBB = (DDD, EEE)
@@ -115,7 +147,8 @@ CCC = (ZZZ, GGG)
 DDD = (DDD, DDD)
 EEE = (EEE, EEE)
 GGG = (GGG, GGG)
-ZZZ = (ZZZ, ZZZ)"#)?;
+ZZZ = (ZZZ, ZZZ)"#,
+        )?;
         let expected = 2;
 
         let actual = map.steps();
@@ -127,11 +160,13 @@ ZZZ = (ZZZ, ZZZ)"#)?;
 
     #[test]
     fn test_example_2() -> Result<(), Error> {
-        let map = Map::from_str(r#"LLR
+        let map = Map::from_str(
+            r#"LLR
 
 AAA = (BBB, BBB)
 BBB = (AAA, ZZZ)
-ZZZ = (ZZZ, ZZZ)"#)?;
+ZZZ = (ZZZ, ZZZ)"#,
+        )?;
         let expected = 6;
 
         let actual = map.steps();
@@ -143,7 +178,8 @@ ZZZ = (ZZZ, ZZZ)"#)?;
 
     #[test]
     fn test_parallel_steps() -> Result<(), Error> {
-        let map = Map::from_str(r#"LR
+        let map = Map::from_str(
+            r#"LR
 
 11A = (11B, XXX)
 11B = (XXX, 11Z)
@@ -152,7 +188,8 @@ ZZZ = (ZZZ, ZZZ)"#)?;
 22B = (22C, 22C)
 22C = (22Z, 22Z)
 22Z = (22B, 22B)
-XXX = (XXX, XXX)"#)?;
+XXX = (XXX, XXX)"#,
+        )?;
         let expected = 6;
 
         let actual = map.parallel_steps();
@@ -161,5 +198,4 @@ XXX = (XXX, XXX)"#)?;
 
         Ok(())
     }
-
 }

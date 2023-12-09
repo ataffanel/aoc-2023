@@ -8,4 +8,4 @@ edition = "2021"
 [dependencies]
 anyhow = { version = "1.0.75", features = ["backtrace"] }
 itertools = "0.12.0"
-rayon = "1.8.0"
+lcmx = "0.1.3"
