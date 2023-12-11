@@ -1,4 +1,4 @@
-use std::{collections::HashMap, str::FromStr};
+use std::{collections::HashMap, str::FromStr, fs::Metadata, ops::{Sub, Add}};
 
 use anyhow::{anyhow, Error};
 use itertools::Itertools;
@@ -9,9 +9,55 @@ struct Coordinate {
     y: i32,
 }
 
+impl Sub<Coordinate> for Coordinate {
+    type Output = Vec2d;
+
+    fn sub(self, rhs: Coordinate) -> Self::Output {
+        Vec2d{ x: self.x - rhs.x, y: self.y - rhs.y }
+    }
+}
+
+impl Add<Vec2d> for Coordinate {
+    type Output = Coordinate;
+
+    fn add(self, rhs: Vec2d) -> Self::Output {
+        Coordinate { x: self.x + rhs.x, y: self.y + rhs.y}
+    }
+}
+
+impl Sub<Vec2d> for Coordinate {
+    type Output = Coordinate;
+
+    fn sub(self, rhs: Vec2d) -> Self::Output {
+        Coordinate { x: self.x - rhs.x, y: self.y - rhs.y }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Default)]
+enum Property {
+    #[default]
+    Unknown,
+    Track,
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Vec2d {
+    x: i32,
+    y: i32,
+}
+
+impl Vec2d {
+    fn rotate_90(self) -> Self {
+        Vec2d{ x: -self.y, y: self.x}
+    }
+}
+
 struct Map {
     pipes: HashMap<Coordinate, (Coordinate, Coordinate)>,
     start: Coordinate,
+    metadata: HashMap<Coordinate, Property>,
 }
 
 impl FromStr for Map {
@@ -74,20 +120,23 @@ impl FromStr for Map {
 
         pipes.insert(start, directions);
 
-        Ok(Self { pipes, start })
+        Ok(Self { pipes, start, metadata: HashMap::new() })
     }
 }
 
 impl Map {
-    fn loop_length(&self) -> Result<u32, Error> {
+    fn loop_length(&mut self) -> Result<u32, Error> {
         let mut len = 1;
         let mut visited = HashMap::new();
 
+        let mut prev_pos = self.start;
         let mut current_pos = self.pipes[&self.start].0;
         visited.insert(self.start, true);
+        self.metadata.insert(self.start, Property::Track);
 
         while current_pos != self.start {
             visited.insert(current_pos, true);
+            self.metadata.insert(current_pos, Property::Track);
 
             // dbg!(&current_pos);
 
@@ -97,7 +146,7 @@ impl Map {
                 .cloned()
                 .ok_or(anyhow!("Map error, {:?} not found", current_pos))?;
 
-            current_pos = if !visited.get(&n1).cloned().unwrap_or_default() || (n1 == self.start && len > 1) {
+            let next_pos = if !visited.get(&n1).cloned().unwrap_or_default() || (n1 == self.start && len > 1) {
                 n1
             } else if !visited.get(&n2).cloned().unwrap_or_default() || (n2 == self.start && len > 1) {
                 n2
@@ -105,8 +154,50 @@ impl Map {
                 return Err(anyhow!("Walk error, nowhere to go ..."));
             };
 
+            // Calculate and set left/right properties for prev->current and current->next pos vector.
+            for vec in [current_pos - prev_pos, next_pos - current_pos] {
+                let left = current_pos + vec.rotate_90();
+                let right = current_pos - vec.rotate_90();
+
+                // dbg!(prev_pos, current_pos, next_pos, vec, left, right);
+
+                if !self.metadata.contains_key(&left) {
+                    self.metadata.insert(left, Property::Left);
+                }
+                if !self.metadata.contains_key(&right) {
+                    self.metadata.insert(right, Property::Right);
+                }
+            }
+
+            prev_pos = current_pos;
+            current_pos = next_pos;
             len += 1;
         }
+
+        // Finish to fill properties for all cells, expand LEFT/RIGHT cells to neighbors
+        for _ in 0..100 {
+            let width = self.pipes.keys().map(|pos| pos.x).max().unwrap() + 1;
+            let height = self.pipes.keys().map(|pos| pos.y).max().unwrap() + 1;
+
+            for x in 0..width {
+                for y in 0..height {
+                    match self.metadata.get(&Coordinate{x, y}).cloned() {
+                        Some(p) if p == Property::Left || p == Property::Right => {
+                            for (vx, vy) in [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1)] {
+                                let target = Coordinate{x, y} + Vec2d{ x: vx, y: vy};
+                                if !self.metadata.contains_key(&target) && (0..width).contains(&target.x) && (0..height).contains(&target.y) {
+                                    self.metadata.insert(target, p);
+                                }
+                            }
+                        }
+                        _ => (),
+                    }
+                }
+            }
+        }
+
+
+            
 
         Ok(len)
     }
@@ -126,19 +217,27 @@ impl Map {
 
             for x in 0..width {
                 let (n1, n2) = self.pipes.get(&Coordinate { x, y }).cloned().unwrap_or((Coordinate{x,y}, Coordinate{x,y}));
+                let property = self.metadata.get(&Coordinate{x,y}).cloned().unwrap_or_default();
 
-                let tile = match ((n1.x-x, n1.y-y), (n2.x-x, n2.y-y)) {
-                    ((-1, 0), (1, 0)) | ((1, 0), (-1, 0)) => '─',
-                    ((0, 1), (0, -1)) | ((0, -1), (0, 1)) => '│',
-                    ((-1, 0), (0, -1)) | ((0, -1), (-1, 0)) => '┘',
-                    ((1, 0), (0, -1)) | ((0, -1), (1, 0)) => '└',
-                    ((1, 0), (0, 1)) | ((0, 1), (1, 0)) => '┌',
-                    ((-1, 0), (0, 1)) | ((0, 1), (-1, 0)) => '┐',
-
-                    _ => '╳',
+                let color = match property {
+                    Property::Unknown => "",
+                    Property::Left => "\x1B[30;32m",
+                    Property::Right => "\x1B[30;31m",
+                    Property::Track => "\x1B[30;34m",
                 };
 
-                print!("{}", tile);
+                let tile = match ((n1.x-x, n1.y-y), (n2.x-x, n2.y-y)) {
+                    ((-1, 0), (1, 0)) | ((1, 0), (-1, 0)) => "─",
+                    ((0, 1), (0, -1)) | ((0, -1), (0, 1)) => "│",
+                    ((-1, 0), (0, -1)) | ((0, -1), (-1, 0)) => "┘",
+                    ((1, 0), (0, -1)) | ((0, -1), (1, 0)) => "└",
+                    ((1, 0), (0, 1)) | ((0, 1), (1, 0)) => "┌",
+                    ((-1, 0), (0, 1)) | ((0, 1), (-1, 0)) => "┐",
+
+                    _ => "╳",
+                };
+
+                print!("{}{}\x1B[0m", color, tile);
             }
             println!();
         }
@@ -148,10 +247,14 @@ impl Map {
 static INPUT: &str = include_str!("../input.txt");
 
 fn main() -> Result<(), Error> {
-    let map = Map::from_str(INPUT)?;
-    map.print_pipes();
+    let mut map = Map::from_str(INPUT)?;
 
     println!("Part 1: Both way meet in the middle at distance {}", map.loop_length()?/2);
+
+    map.print_pipes();
+
+    println!("Part 2: Number of \x1B[30;31mRight cell: {}\x1B[0m, \x1B[30;32mLeft cell: {}\x1B[0m", map.metadata.values().filter(|v| **v == Property::Right).count(), map.metadata.values().filter(|v| **v == Property::Left).count());
+
 
     Ok(())
 }
@@ -172,13 +275,24 @@ SJ.L7
 |F--J
 LJ..."#;
 
+static PART2_EXAMPLE: &str = r#"..........
+.S------7.
+.|F----7|.
+.||....||.
+.||....||.
+.|L-7F-J|.
+.|..||..|.
+.L--JL--J.
+.........."#;
+
     #[test]
     fn test_simple_example() -> Result<(), Error> {
-        let map = Map::from_str(SIMPLE_EXAMPLE)?;
-        map.print_pipes();
+        let mut map = Map::from_str(SIMPLE_EXAMPLE)?;
         let expected = 4;
 
         let actual = map.loop_length()? / 2;
+
+        map.print_pipes();
 
         assert_eq!(expected, actual);
         Ok(())
@@ -186,13 +300,25 @@ LJ..."#;
 
     #[test]
     fn test_complex_example() -> Result<(), Error> {
-        let map = Map::from_str(COMPLEX_EXAMPLE)?;
-        map.print_pipes();
+        let mut map = Map::from_str(COMPLEX_EXAMPLE)?;
         let expected = 8;
 
         let actual = map.loop_length()? / 2;
 
+        map.print_pipes();
+
         assert_eq!(expected, actual);
+        Ok(())
+    }
+
+    #[test]
+    fn test_part2_example() -> Result<(), Error> {
+        let mut map = Map::from_str(PART2_EXAMPLE)?;
+
+        map.loop_length()?;
+
+        map.print_pipes();
+
         Ok(())
     }
 }
